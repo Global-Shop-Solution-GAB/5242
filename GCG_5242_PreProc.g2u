@@ -1,0 +1,230 @@
+Program.Sub.ScreenSU.Start
+Gui.FormCrossReferenceSelection..Create
+Gui.FormCrossReferenceSelection..Caption("Country of Origin Selection")
+Gui.FormCrossReferenceSelection..Size(4965,1815)
+Gui.FormCrossReferenceSelection..MinX(0)
+Gui.FormCrossReferenceSelection..MinY(0)
+Gui.FormCrossReferenceSelection..Position(0,0)
+Gui.FormCrossReferenceSelection..BackColor(-2147483633)
+Gui.FormCrossReferenceSelection..MousePointer(0)
+Gui.FormCrossReferenceSelection..Event(UnLoad,FormCrossReferenceSelection_UnLoad)
+Gui.FormCrossReferenceSelection..AlwaysOnTop(True)
+Gui.FormCrossReferenceSelection..MaxButton(False)
+Gui.FormCrossReferenceSelection..MinButton(False)
+Gui.FormCrossReferenceSelection..Sizeable(False)
+Gui.FormCrossReferenceSelection.labelPart.Create(Label,"Part:",True,465,255,0,570,135,True,0,"Arial",8,-2147483633,0)
+Gui.FormCrossReferenceSelection.textPart.Create(TextBox,"",True,2910,300,0,1035,45,False,0,"Arial",8,-2147483643,1)
+Gui.FormCrossReferenceSelection.dropdownCrossReference.Create(DropDownList)
+Gui.FormCrossReferenceSelection.dropdownCrossReference.Size(4335,330)
+Gui.FormCrossReferenceSelection.dropdownCrossReference.Position(255,720)
+Gui.FormCrossReferenceSelection.buttonSubmit.Create(Button)
+Gui.FormCrossReferenceSelection.buttonSubmit.Size(990,375)
+Gui.FormCrossReferenceSelection.buttonSubmit.Position(1965,1110)
+Gui.FormCrossReferenceSelection.buttonSubmit.Caption("Submit")
+Gui.FormCrossReferenceSelection.buttonSubmit.Event(Click,buttonSubmit_Click)
+Gui.FormCrossReferenceSelection.labelCrossReference.Create(Label,"Cross Reference / Country of Origin To Use:",True,3615,255,0,795,465,True,0,"Arial",8,-2147483633,0)
+Gui.FormCrossReferenceSelection.labelCrossReference.DefaultValue("")
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+V.Global.iCounter.Declare(Long)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'GCG_5242_PreProc.g2u
+'Trey Seddon
+'10/3/2018
+'For Air Quality Engineering
+'AIR220-71020180717-7
+'PreProc for report 113, Commercial Invoice
+'On hook 16090, BUSINT pre process hook
+'Prompts user to select the cross reference for parts being used on the commercial invoice
+
+V.Local.sError.Declare(String)
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Control.If(V.Passed.BIP_REPORTID, =, "000113")
+	F.ODBC.Connection!Con.OpenCompanyConnection
+	F.Intrinsic.Control.CallSub(LoadData)
+	F.Intrinsic.Control.CallSub(LoadNextPart)
+	GUI.FormCrossReferenceSelection..Show
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+    F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+    F.Intrinsic.UI.Msgbox(V.Local.sError)
+    F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.LoadData.Start
+V.Local.sError.Declare(String)
+F.Intrinsic.Control.Try
+
+'Load the parts being used from the PRT_LASER_INVOICE table, get the cross reference information for them
+V.Local.sSQL.Declare(String)
+F.Intrinsic.String.Build("select PART from PRT_LASER_INVOICE where Terminal_NO = '{0}' and RPTID = '000113' and PART != ''", V.Caller.Terminal, V.Local.sSQL)
+
+F.Data.DataTable.CreateFromSQL("tableParts", "Con", V.Local.sSQL, True)
+
+'filter cross references for speed
+V.Local.iI.Declare(Long)
+V.Local.sFilter.Declare(String)
+F.Intrinsic.Control.For(V.Local.iI, 0, V.DataTable.tableParts.RowCount--, 1)
+	F.Intrinsic.Control.If(V.Local.iI, =, V.DataTable.tableParts.RowCount--)
+		F.Intrinsic.String.Build("{1} Part = '{0}'", V.DataTable.tableParts(V.Local.iI).Part!FieldValTrim, V.Local.sFilter, V.Local.sFilter)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.String.Build("{1} Part = '{0}' or", V.DataTable.tableParts(V.Local.iI).Part!FieldValTrim, V.Local.sFilter, V.Local.sFilter)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.iI)
+
+'get user field 1
+F.Intrinsic.String.Build("select RTRIM(PART) as PART, RTRIM(TEXT_INFO1) as HS from INVENTORY_MST2 where {0}", V.Local.sFilter, V.Local.sSQL)
+F.Data.DataTable.CreateFromSQL("tableUserField", "Con", V.Local.sSQL, True)
+F.Intrinsic.Control.CallSub(SetUserField1)
+
+'Still picking ones without a user defined part for some reason, filtering it in dataview
+F.Intrinsic.String.Build("select RTRIM(VENDOR) as VENDOR, RTRIM(Part) as Part, RTRIM(MFG_PART) as XRef, RTRIM(USER_DEFINED_PART) as COO from INV_CROSS_REF where COO != '' and {0}", V.Local.sFilter, V.Local.sSQL)
+F.Data.DataTable.CreateFromSQL("tableCrossReferences", "Con", V.Local.sSQL, True)
+F.Data.DataTable.AddColumn("tableCrossReferences", "DropDown", "String")
+
+'If there are no crossreferences for any of the parts, don't need to do anything
+F.Intrinsic.Control.If(V.DataTable.tableCrossReferences.RowCount, =, 0)
+	F.Intrinsic.Control.CallSub(FormCrossReferenceSelection_UnLoad)
+F.Intrinsic.Control.EndIf
+
+'Filter vendors for speed
+V.Local.sFilter.Set("")
+F.Intrinsic.Control.For(V.Local.iI, 0, V.DataTable.tableCrossReferences.RowCount--, 1)
+	F.Intrinsic.Control.If(V.DataTable.tableCrossReferences(V.Local.iI).Vendor!FieldValTrim, !=, "")
+		F.Intrinsic.Control.If(V.Local.iI, =, V.DataTable.tableCrossReferences.RowCount--)
+			F.Intrinsic.String.Build("{1} Vendor = '{0}'", V.DataTable.tableCrossReferences(V.Local.iI).Vendor!FieldValTrim, V.Local.sFilter, V.Local.sFilter)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.String.Build("{1} Vendor = '{0}' or", V.DataTable.tableCrossReferences(V.Local.iI).Vendor!FieldValTrim, V.Local.sFilter, V.Local.sFilter)
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.iI)
+
+'Get vendor names
+F.Intrinsic.Control.If(V.Local.sFilter, !=, "")
+	F.Intrinsic.String.Build("select RTRIM(Vendor) as Vendor, RTRIM(NAME_VENDOR) as Name from V_VENDOR_MASTER where {0}", V.Local.sFilter, V.Local.sSQL)
+	F.Data.Dictionary.CreateFromSQL("dictionaryVendors", "Con", V.Local.sSQL)
+	F.Data.Dictionary.SetDefaultReturn("dictionaryVendors", "")
+	F.Data.DataTable.FillFromDictionary("tableCrossReferences", "dictionaryVendors", "Vendor")
+	F.Data.Dictionary.Close("dictionaryVendors")
+F.Intrinsic.Control.EndIf
+
+'add the extra information for the drop down
+V.Local.sTemp.Declare(String)
+F.Intrinsic.Control.For(V.Local.iI, 0, V.DataTable.tableCrossReferences.RowCount--, 1)
+	F.Intrinsic.String.Build("{0} : {1}", V.DataTable.tableCrossReferences(V.Local.iI).Vendor!FieldValTrim, V.DataTable.tableCrossReferences(V.Local.iI).COO!FieldValTrim, V.Local.sTemp)
+	F.Data.DataTable.SetValue("tableCrossReferences", V.Local.iI, "DropDown", V.Local.sTemp)
+F.Intrinsic.Control.Next(V.Local.iI)
+
+F.Data.DataView.Create("tableCrossReferences", "viewCurrentCrossReferences")
+
+F.Intrinsic.Control.Catch
+    F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+    F.Intrinsic.UI.Msgbox(V.Local.sError)
+    F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.LoadData.End
+
+Program.Sub.LoadNextPart.Start
+V.Local.sError.Declare(String)
+F.Intrinsic.Control.Try
+
+'set the part number on screen and populate the drop down with the cross references
+GUI.FormCrossReferenceSelection.textPart.Text(V.DataTable.tableParts(V.Global.iCounter).Part!FieldValTrim)
+
+V.Local.sFilter.Declare(String)
+F.Intrinsic.String.Build("COO <> '' and Part = '{0}'", V.DataTable.tableParts(V.Global.iCounter).Part!FieldValTrim, V.Local.sFilter)
+
+F.Data.DataView.SetFilter("tableCrossReferences", "viewCurrentCrossReferences", V.Local.sFilter)
+GUI.FormCrossReferenceSelection.dropdownCrossReference.ClearItems
+GUI.FormCrossReferenceSelection.dropdownCrossReference.AddItems("DataView", "tableCrossReferences", "viewCurrentCrossReferences", "Part", "DropDown")
+
+'If there are no cross references for that part, just skip
+F.Intrinsic.Control.If(V.DataView.tableCrossReferences!viewCurrentCrossReferences.RowCount, =, 0)
+	GUI.FormCrossReferenceSelection.dropdownCrossReference.Text(":")
+	F.Intrinsic.Control.CallSub(buttonSubmit_Click)
+F.Intrinsic.Control.ElseIf(V.DataView.tableCrossReferences!viewCurrentCrossReferences.RowCount, =, 1)
+	GUI.FormCrossReferenceSelection.dropdownCrossReference.ListIndex(0)
+	F.Intrinsic.Control.CallSub(buttonSubmit_Click)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+    F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+    F.Intrinsic.UI.Msgbox(V.Local.sError)
+    F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.LoadNextPart.End
+
+Program.Sub.FormCrossReferenceSelection_UnLoad.Start
+V.Local.sError.Declare(String)
+F.Intrinsic.Control.Try
+
+'Clean up and exit
+GUI.FormCrossReferenceSelection..Visible(False)
+F.Data.DataTable.Close("tableParts")
+F.ODBC.Connection!Con.Close
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+    F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+    F.Intrinsic.UI.Msgbox(V.Local.sError)
+    F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.FormCrossReferenceSelection_UnLoad.End
+
+Program.Sub.buttonSubmit_Click.Start
+V.Local.sError.Declare(String)
+F.Intrinsic.Control.Try
+
+'save the selected cross reference to PRT_LASER_INVOICE in the HDR_USR_LBL_1 field that isn't used for this report, then prompt for the next part if necessary
+GUI.FormCrossReferenceSelection..Visible(False)
+'save the cross reference
+V.Local.sSelected.Declare(String)
+V.Local.sSelected.Set(V.Screen.FormCrossReferenceSelection!dropdownCrossReference.Value.Trim)
+F.Intrinsic.String.Split(V.Local.sSelected, ":", V.Local.sSelected)
+
+V.Local.sSQL.Declare(String)
+F.Intrinsic.String.Build("Update PRT_LASER_INVOICE set HDR_USR_LBL_1 = '{0}' where Terminal_NO = '{1}' and RPTID = '000113' and PART = '{2}'", V.Local.sSelected(1).Trim, V.Caller.Terminal, V.DataTable.tableParts(V.Global.iCounter).Part!FieldValTrim, V.Local.sSQL)
+F.ODBC.Connection!Con.Execute(V.Local.sSQL)
+
+'if necessary, load next part
+F.Intrinsic.Control.If(V.Global.iCounter, !=, V.DataTable.tableParts.RowCount--)
+	F.Intrinsic.Math.Add(V.Global.iCounter, 1, V.Global.iCounter)
+	F.Intrinsic.Control.CallSub(LoadNextPart)
+	GUI.FormCrossReferenceSelection..Visible(True)
+F.Intrinsic.Control.Else
+	F.Intrinsic.Control.CallSub(FormCrossReferenceSelection_UnLoad)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+    F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+    F.Intrinsic.UI.Msgbox(V.Local.sError)
+    F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.buttonSubmit_Click.End
+
+Program.Sub.SetUserField1.Start
+V.Local.sError.Declare(String)
+F.Intrinsic.Control.Try
+
+'set user field 1 / harmonization code for the parts
+V.Local.iI.Declare(Long)
+V.Local.sSQL.Declare(String)
+F.Intrinsic.Control.For(V.Local.iI, 0, V.DataTable.tableUserField.RowCount--, 1)
+	F.Intrinsic.String.Build("Update PRT_LASER_INVOICE set HDR_USR_LBL_2 = '{0}' where Terminal_NO = '{1}' and RPTID = '000113' and PART = '{2}'", V.DataTable.tableUserField(V.Local.iI).HS!FieldValTrim, V.Caller.Terminal, V.DataTable.tableUserField(V.Local.iI).Part!FieldValTrim, V.Local.sSQL)
+	F.ODBC.Connection!Con.Execute(V.Local.sSQL)
+F.Intrinsic.Control.Next(V.Local.iI)
+
+F.Data.DataTable.Close("tableUserField")
+
+F.Intrinsic.Control.Catch
+    F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+    F.Intrinsic.UI.Msgbox(V.Local.sError)
+    F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.SetUserField1.End
